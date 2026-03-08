@@ -1,0 +1,6 @@
+@AIBE_HostAddress = http://localhost:5014
+
+GET {{AIBE_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
