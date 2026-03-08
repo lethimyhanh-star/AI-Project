@@ -1,0 +1,151 @@
+@page "/training-ai"
+@using AIFE.Api
+@rendermode InteractiveServer
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+
+<PageTitle>Training AI</PageTitle>
+
+<h1>Training AI</h1>
+
+<EditForm Model="model" OnValidSubmit="HandleSubmit" FormName="trainingForm">
+    <DataAnnotationsValidator />
+    <ValidationSummary class="text-danger mb-3" />
+
+    <div class="mb-3">
+        <label for="zipFile" class="form-label">File ZIP</label>
+        <InputFile id="zipFile"
+                   class="form-control"
+                   Accept=".zip"
+                   OnChange="OnFileSelected" />
+        @if (selectedFileName != null)
+        {
+            <div class="form-text text-success">Đã chọn: @selectedFileName</div>
+        }
+    </div>
+
+    <div class="mb-3">
+        <label for="prompt" class="form-label">Prompt</label>
+        <InputTextArea id="prompt"
+                      class="form-control"
+                      rows="5"
+                      @bind-Value="model.Prompt"
+                      placeholder="Nhập prompt cho training..." />
+    </div>
+
+    <button type="submit"
+            class="btn btn-primary"
+            disabled="@isSubmitting">
+        @if (isSubmitting)
+        {
+            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+        }
+        Gửi tới API
+    </button>
+
+    @if (resultMessage != null)
+    {
+        <div class="alert @(isSuccess ? "alert-success" : "alert-danger") mt-3">
+            @resultMessage
+        </div>
+    }
+</EditForm>
+
+@code {
+    private TrainingAIModel model = new();
+    private IBrowserFile? selectedFile;
+    private string? selectedFileName;
+    private bool isSubmitting;
+    private string? resultMessage;
+    private bool isSuccess;
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (Path.GetExtension(file.Name).ToLowerInvariant() != ".zip")
+        {
+            resultMessage = "Vui lòng chọn file .zip";
+            isSuccess = false;
+            selectedFile = null;
+            selectedFileName = null;
+            return;
+        }
+
+        // Giới hạn 100MB
+        if (file.Size > 100 * 1024 * 1024)
+        {
+            resultMessage = "File không được vượt quá 100MB";
+            isSuccess = false;
+            selectedFile = null;
+            selectedFileName = null;
+            return;
+        }
+        selectedFile = file;
+        selectedFileName = file.Name;
+        resultMessage = null;
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (selectedFile == null)
+        {
+            resultMessage = "Vui lòng chọn file ZIP.";
+            isSuccess = false;
+            return;
+        }
+
+        isSubmitting = true;
+        resultMessage = null;
+
+        try
+        {
+            var httpClient = HttpClientFactory.CreateClient();
+            var baseUrl = Configuration["ApiSettings:BaseUrl"] ?? "https://localhost:7000";
+            var apiUrl = $"{baseUrl.TrimEnd('/')}/{ApiEndpoints.Training}";
+
+            using var content = new MultipartFormDataContent();
+            content.Add(new StringContent(model.Prompt ?? string.Empty), "prompt");
+
+            var stream = selectedFile.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024);
+            var streamContent = new StreamContent(stream);
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+            content.Add(streamContent, "file", selectedFile.Name);
+
+            var response = await httpClient.PostAsync(apiUrl, content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                resultMessage = "Gửi thành công!";
+                isSuccess = true;
+                model.Prompt = string.Empty;
+                selectedFile = null;
+                selectedFileName = null;
+            }
+            else
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                resultMessage = $"Lỗi: {response.StatusCode}. {errorBody}";
+                isSuccess = false;
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            resultMessage = $"Không thể kết nối API: {ex.Message}";
+            isSuccess = false;
+        }
+        catch (Exception ex)
+        {
+            resultMessage = $"Lỗi: {ex.Message}";
+            isSuccess = false;
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private class TrainingAIModel
+    {
+        public string? Prompt { get; set; }
+    }
+}
